@@ -92,6 +92,15 @@ fn test_cfxlua() {
 }
 
 #[test]
+#[cfg(feature = "hexm")]
+fn test_hexm() {
+    insta::glob!("inputs-hexm/*.lua", |path| {
+        let contents = std::fs::read_to_string(path).unwrap();
+        insta::assert_snapshot!(format(&contents, LuaVersion::HexM));
+    })
+}
+
+#[test]
 fn test_ignores() {
     insta::glob!("inputs-ignore/*.lua", |path| {
         let contents = std::fs::read_to_string(path).unwrap();

@@ -377,6 +377,14 @@ define_update_trivia!(FunctionArgs, |this, leading, trailing| {
         FunctionArgs::TableConstructor(table_constructor) => {
             FunctionArgs::TableConstructor(table_constructor.update_trivia(leading, trailing))
         }
+        #[cfg(feature = "hexm")]
+        FunctionArgs::Fields {
+            parentheses,
+            fields,
+        } => FunctionArgs::Fields {
+            parentheses: parentheses.update_trivia(leading, trailing),
+            fields: fields.to_owned(),
+        },
         other => panic!("unknown node {:?}", other),
     }
 });

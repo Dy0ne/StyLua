@@ -16,6 +16,11 @@ use crate::formatters::luau::{
     const_keyword_token_ref, format_generic_declaration, format_luau_attribute,
     format_type_instantiation, format_type_specifier,
 };
+#[cfg(feature = "hexm")]
+use crate::formatters::{
+    general::{format_token, trivia_to_vec, FormatTokenType},
+    table::{format_field, TableType},
+};
 use crate::{
     context::{
         create_function_call_trivia, create_function_definition_trivia, create_indent_trivia,
@@ -608,7 +613,120 @@ pub fn format_function_args(
                 arguments,
             }
         }
+        #[cfg(feature = "hexm")]
+        FunctionArgs::Fields {
+            parentheses,
+            fields,
+        } => format_function_args_fields(ctx, parentheses, fields, shape),
         other => panic!("unknown node {:?}", other),
+    }
+}
+
+/// Formats keyed function arguments, such as `dict(a = 1, [k] = v)` (HexM Lua).
+/// Each argument is formatted like a table field, but they are laid out like call arguments:
+/// on a single line if that fits, otherwise one per line. As this is a call and not a table,
+/// no spaces are added inside the parentheses, and no trailing comma is added.
+#[cfg(feature = "hexm")]
+fn format_function_args_fields(
+    ctx: &Context,
+    parentheses: &ContainedSpan,
+    fields: &Punctuated<Field>,
+    shape: Shape,
+) -> FunctionArgs {
+    let (start_parens, end_parens) = parentheses.tokens();
+
+    // If there is a comment present anywhere in between the parentheses, we must go multiline
+    let contains_comments = start_parens.has_trailing_comments(CommentSearch::All)
+        || end_parens.has_leading_comments(CommentSearch::All)
+        || trivia_util::fields_contain_comments(fields);
+
+    if !contains_comments {
+        let singleline_parentheses = ContainedSpan::new(
+            format_token_reference(ctx, start_parens, shape),
+            format_token_reference(ctx, end_parens, shape),
+        );
+
+        let mut singleline_shape = shape + 1; // 1 = opening parentheses
+        let mut singleline_fields = Punctuated::new();
+
+        for pair in fields.pairs() {
+            let (field, _) =
+                format_field(ctx, pair.value(), TableType::SingleLine, singleline_shape);
+            singleline_shape = singleline_shape.take_last_line(&field) + 2; // 2 = ", "
+
+            let punctuation = pair
+                .punctuation()
+                .map(|punctuation| fmt_symbol!(ctx, punctuation, ", ", shape));
+
+            singleline_fields.push(Pair::new(field, punctuation));
+        }
+
+        // Use the single line version if none of the arguments span multiple lines, and it fits
+        let width = "(".len() + singleline_fields.to_string().len() + ")".len();
+        if !singleline_fields.to_string().contains('\n') && !shape.add_width(width).over_budget() {
+            return FunctionArgs::Fields {
+                parentheses: singleline_parentheses,
+                fields: singleline_fields,
+            };
+        }
+    }
+
+    // Format start and end parentheses properly with correct trivia
+    let start_parens = format_token_reference(ctx, start_parens, shape)
+        .update_trailing_trivia(FormatTriviaType::Append(vec![create_newline_trivia(ctx)]));
+
+    let end_parens = format_end_token(ctx, end_parens, EndTokenType::IndentComments, shape)
+        .update_leading_trivia(FormatTriviaType::Append(vec![create_indent_trivia(
+            ctx, shape,
+        )]));
+
+    let shape = shape.reset().increment_additional_indent();
+    let mut formatted_fields = Punctuated::new();
+    let mut ctx = *ctx;
+
+    for pair in fields.pairs() {
+        let (field, punctuation) = (pair.value(), pair.punctuation());
+
+        ctx = ctx.check_toggle_formatting(field);
+
+        // Reset the shape onto a new line, as we are a new argument. 1 = the comma after the argument
+        let shape = shape.reset().add_width(1);
+
+        // Format the argument. Any singleline comments trailing it are taken out, to be moved after the comma
+        let (formatted_field, trailing_comments) =
+            format_field(&ctx, field, TableType::MultiLine, shape);
+
+        let mut trailing_trivia: Vec<Token> = trailing_comments
+            .iter()
+            .filter(|trivia| !trivia_util::trivia_is_whitespace(trivia))
+            .flat_map(|trivia| {
+                trivia_to_vec(format_token(
+                    &ctx,
+                    trivia,
+                    FormatTokenType::TrailingTrivia,
+                    shape,
+                ))
+            })
+            .collect();
+        trailing_trivia.push(create_newline_trivia(&ctx));
+
+        let formatted_punctuation = match punctuation {
+            Some(punctuation) => fmt_symbol!(&ctx, punctuation, ",", shape)
+                .update_trailing_trivia(FormatTriviaType::Append(trailing_trivia)),
+            // The last argument has no comma, as trailing commas are not allowed here.
+            // We still need to end the line, so we create a phantom comma which is actually just a new line
+            None => {
+                let newline = trailing_trivia.pop().unwrap();
+                TokenReference::new(trailing_trivia, newline, vec![])
+            }
+        };
+
+        formatted_fields.push(Pair::new(formatted_field, Some(formatted_punctuation)));
+    }
+
+    FunctionArgs::Fields {
+        parentheses: ContainedSpan::new(start_parens, end_parens),
+        fields: formatted_fields,
     }
 }
 
@@ -676,7 +794,11 @@ fn should_parameters_format_multiline(
 }
 
 fn table_constructor_contains_nested_function(table_constructor: &TableConstructor) -> bool {
-    table_constructor.fields().iter().any(|field| match field {
+    fields_contain_nested_function(table_constructor.fields())
+}
+
+fn fields_contain_nested_function(fields: &Punctuated<Field>) -> bool {
+    fields.iter().any(|field| match field {
         Field::NoKey(expression) => contains_nested_function(expression),
         Field::ExpressionKey { key, value, .. } => {
             contains_nested_function(key) || contains_nested_function(value)
@@ -696,6 +818,8 @@ fn suffix_contains_nested_function(suffix: &Suffix) -> bool {
         FunctionArgs::TableConstructor(table_constructor) => {
             table_constructor_contains_nested_function(table_constructor)
         }
+        #[cfg(feature = "hexm")]
+        FunctionArgs::Fields { fields, .. } => fields_contain_nested_function(fields),
         _ => false,
     };
 

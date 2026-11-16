@@ -1,0 +1,249 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -50,6 +50,7 @@
+ [features]
+ cfxlua = ["lua54"]
+ default = ["serde"]
++hexm = ["lua54"]
+ lua52 = []
+ lua53 = ["lua52"]
+ lua54 = ["lua53"]
+--- a/src/ast/mod.rs
++++ b/src/ast/mod.rs
+@@ -583,6 +583,18 @@
+     /// Used when a function is called in the form of `call { 1, 2, 3 }`
+     #[display("{_0}")]
+     TableConstructor(Box<TableConstructor>),
++    /// Used when a function is called with keyed arguments, such as `dict(a = 1, [k] = v)`.
++    /// At least one of the fields is keyed, otherwise the call is a [`FunctionArgs::Parentheses`].
++    /// Only available when the "hexm" feature flag is enabled.
++    #[cfg(feature = "hexm")]
++    #[display("{}{}{}", parentheses.tokens().0, fields, parentheses.tokens().1)]
++    Fields {
++        /// The `(...) part of (a = 1, [k] = v)`
++        #[node(full_range)]
++        parentheses: ContainedSpan,
++        /// The `a = 1, [k] = v` part of `(a = 1, [k] = v)`
++        fields: Punctuated<Field>,
++    },
+ }
+ 
+ impl FunctionArgs {
+--- a/src/ast/parsers.rs
++++ b/src/ast/parsers.rs
+@@ -1887,6 +1887,12 @@
+             symbol: Symbol::LeftParen,
+         } => {
+             let left_parenthesis = state.consume().unwrap();
++
++            #[cfg(feature = "hexm")]
++            if state.lua_version().has_hexm() {
++                return parse_hexm_arguments(state, left_parenthesis);
++            }
++
+             let arguments = try_parser!(parse_expression_list(state)).unwrap_or_default();
+             let right_parenthesis = match state.require_with_reference_token(
+                 Symbol::RightParen,
+@@ -1920,6 +1926,128 @@
+ 
+         _ => ParserResult::NotFound,
+     }
++}
++
++/// Whether the parser sits on the start of a keyed field: `[expression] =` or `name =`.
++#[cfg(feature = "hexm")]
++fn at_keyed_field(state: &ParserState) -> bool {
++    match state.current() {
++        Ok(token) if token.is_symbol(Symbol::LeftBracket) => true,
++        Ok(token) if token.token_kind() == TokenKind::Identifier => {
++            matches!(state.peek(), Ok(peek_token) if peek_token.is_symbol(Symbol::Equal))
++        }
++        _ => false,
++    }
++}
++
++/// Parses the arguments of a parenthesised call in HexM Lua, after the `(`.
++/// Arguments may be keyed like table fields: `dict(a = 1, [k] = v)`, optionally
++/// mixed with positional ones. A call without any keyed argument parses exactly
++/// like standard Lua, into a [`FunctionArgs::Parentheses`](ast::FunctionArgs::Parentheses).
++#[cfg(feature = "hexm")]
++fn parse_hexm_arguments(
++    state: &mut ParserState,
++    left_parenthesis: TokenReference,
++) -> ParserResult<ast::FunctionArgs> {
++    let mut fields: Punctuated<ast::Field> = Punctuated::new();
++    let mut keyed = false;
++
++    loop {
++        let field = if at_keyed_field(state) {
++            keyed = true;
++
++            if state.current().unwrap().is_symbol(Symbol::LeftBracket) {
++                let left_bracket = state.consume().unwrap();
++
++                match expect_expression_key(state, left_bracket) {
++                    Ok(field) => field,
++                    Err(()) => break,
++                }
++            } else {
++                let key = state.consume().unwrap();
++                let equal_token = state.consume().unwrap();
++
++                match parse_expression(state) {
++                    ParserResult::Value(expression) => ast::Field::NameKey {
++                        key,
++                        equal: equal_token,
++                        value: Box::new(expression),
++                    },
++
++                    ParserResult::NotFound => {
++                        state.token_error(equal_token, "expected an expression after `=`");
++                        break;
++                    }
++
++                    ParserResult::LexerMoved => break,
++                }
++            }
++        } else {
++            match parse_expression(state) {
++                ParserResult::Value(expression) => ast::Field::NoKey(expression),
++
++                // Unlike standard Lua, HexM accepts a trailing comma in a call,
++                // such as `dict(a = 1, b = 2,)` (its keyed calls mirror Python
++                // kwargs, which allow it). `call()` reaches here too and is fine.
++                ParserResult::NotFound => break,
++
++                ParserResult::LexerMoved => break,
++            }
++        };
++
++        match state.current() {
++            Ok(token) if token.is_symbol(Symbol::Comma) => {
++                fields.push(Pair::Punctuated(field, state.consume().unwrap()));
++            }
++
++            _ => {
++                fields.push(Pair::End(field));
++                break;
++            }
++        }
++    }
++
++    // Drop any trailing comma so the node still prints validly (the formatter
++    // does not emit one for these calls regardless).
++    if let Some(Pair::Punctuated(..)) = fields.last() {
++        let last_field = fields.pop().unwrap().into_value();
++        fields.push(Pair::End(last_field));
++    }
++
++    let right_parenthesis = match state.require_with_reference_token(
++        Symbol::RightParen,
++        "expected `)` to close function call",
++        &left_parenthesis,
++    ) {
++        Some(token) => token,
++
++        None => TokenReference::basic_symbol(")"),
++    };
++
++    let parentheses = ContainedSpan::new(left_parenthesis, right_parenthesis);
++
++    if keyed {
++        return ParserResult::Value(ast::FunctionArgs::Fields {
++            parentheses,
++            fields,
++        });
++    }
++
++    // No keyed arguments: this is a standard call
++    let arguments = fields
++        .into_pairs()
++        .map(|pair| {
++            pair.map(|field| match field {
++                ast::Field::NoKey(expression) => expression,
++                _ => unreachable!("keyed field in a call without keyed arguments"),
++            })
++        })
++        .collect();
++
++    ParserResult::Value(ast::FunctionArgs::Parentheses {
++        parentheses,
++        arguments,
++    })
+ }
+ 
+ fn parse_suffix(state: &mut ParserState) -> ParserResult<ast::Suffix> {
+--- a/src/ast/versions.rs
++++ b/src/ast/versions.rs
+@@ -6,6 +6,7 @@
+ const VERSION_LUA54: u8 = 1 << 3;
+ const VERSION_LUAJIT: u8 = 1 << 4;
+ const VERSION_CFXLUA: u8 = 1 << 5;
++const VERSION_HEXM: u8 = 1 << 6;
+ 
+ /// Represents the Lua version(s) to parse as.
+ /// Lua 5.1 is always included.
+@@ -140,6 +141,25 @@
+     /// Returns true if CFX Lua is enabled.
+     pub fn has_cfxlua(self) -> bool {
+         cfg!(feature = "cfxlua") && (self.bitfield & VERSION_CFXLUA != 0)
++    }
++
++    /// Creates a new LuaVersion with HexM Lua (Messiah Engine), which includes Lua 5.2, 5.3, and Lua 5.4 features.
++    #[cfg(feature = "hexm")]
++    pub fn hexm() -> Self {
++        Self {
++            bitfield: VERSION_LUA52 | VERSION_LUA53 | VERSION_LUA54 | VERSION_HEXM,
++        }
++    }
++
++    /// Adds HexM Lua as a version to parse for.
++    #[cfg(feature = "hexm")]
++    pub fn with_hexm(self) -> Self {
++        self | Self::hexm()
++    }
++
++    /// Returns true if HexM Lua is enabled.
++    pub fn has_hexm(self) -> bool {
++        cfg!(feature = "hexm") && (self.bitfield & VERSION_HEXM != 0)
+     }
+ }
+ 
+--- a/src/ast/visitors.rs
++++ b/src/ast/visitors.rs
+@@ -299,6 +299,15 @@
+             FunctionArgs::TableConstructor(__self_0) => {
+                 __self_0.visit(visitor);
+             }
++            #[cfg(feature = "hexm")]
++            FunctionArgs::Fields {
++                parentheses,
++                fields,
++            } => {
++                parentheses.tokens.0.visit(visitor);
++                fields.visit(visitor);
++                parentheses.tokens.1.visit(visitor);
++            }
+         };
+ 
+         visitor.visit_function_args_end(self);
+@@ -324,6 +333,19 @@
+             FunctionArgs::String(__self_0) => FunctionArgs::String(__self_0.visit_mut(visitor)),
+             FunctionArgs::TableConstructor(__self_0) => {
+                 FunctionArgs::TableConstructor(__self_0.visit_mut(visitor))
++            }
++            #[cfg(feature = "hexm")]
++            FunctionArgs::Fields {
++                mut parentheses,
++                mut fields,
++            } => {
++                parentheses.tokens.0 = parentheses.tokens.0.visit_mut(visitor);
++                fields = fields.visit_mut(visitor);
++                parentheses.tokens.1 = parentheses.tokens.1.visit_mut(visitor);
++                FunctionArgs::Fields {
++                    parentheses,
++                    fields,
++                }
+             }
+         };
+ 

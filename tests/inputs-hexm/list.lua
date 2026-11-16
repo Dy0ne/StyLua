@@ -1,0 +1,47 @@
+local empty, empty_proxy = list(), listproxy()
+local numbers = list(24005, 34013, 34021, -38006, 0x10, 1.5)
+local strings = listproxy("n00_PassNode", "n01_ChooseTargetAction")
+local single = dict([614088] = list(154))
+local varargs = list(...)
+local unary = list( - pos[1], pos[2],  - pos[3], #items, not flag)
+local exprs = list((min_x + max_x) / 2, 0,(min_y + max_y) / 2)
+local tables = list({},{},{}
+)
+local calls = list(a:b(), c.d(1), function() return 1 end)
+
+-- multiline in the input, but short enough to fit on one line
+_M.DECISION_DEFENSE_SEQUENCE = listproxy(
+  slap_face_consts.SLAP_FACE_SKILL_SLOT_ID_EVADE,
+  0
+)
+
+-- too long for one line
+child_name_list = listproxy("n00_NPassNode", "n01_ReceiveEventDecorator", "n02_ReceiveEventDecorator", "n03_PlayAnimAction", "n04_Pause", "n05_Wait")
+
+_M.MULTI_SAMPLE_DIRECTIONS = list({forward = 1, side = 0},{forward = -1, side = 0},{forward = 0, side = 1},{forward = 0, side = -1},{forward = 1, side = 1}
+)
+
+-- nested lists and dicts
+local matrix = list(list(1, 2, 3), list(4, 5, 6), listproxy(7, 8, 9))
+local bars = list(dict(text = PT.REVIEW_REWARD, key_ids = dict(xbox = keyboard_consts.PAD_LS, ps = keyboard_consts.PAD_LS), values = list(1, 2, 3)))
+local rows = list(dict(id = 1, tags = list("a", "b")), dict(id = 2, tags = list()), dict(id = 3, tags = listproxy("cccccccccccccccc", "dddddddddddddddd")))
+
+-- keyed and mixed arguments
+local point = list(x = data[1], y = data[2])
+local keyed_proxy = listproxy([1] = "a", [2] = "b")
+local mixed = list(1, 2, last = 3)
+local long_mixed = list(first_positional_value, second_positional_value, third_positional_value, keyed_name = keyed_value, [other_key] = other_value)
+
+-- as arguments, and with suffixes
+for _, var in ipairs(list(...)) do print(var) end
+self:_on_move_touch(list(current = curr_pos, last = last_pos))
+local n = list(1, 2, 3):count(2) + #list(4, 5)
+local first = list(1, 2, 3)[1]
+
+-- comments
+local commented = list(
+  1, -- one
+  -- two
+  2,
+  3 -- three
+)

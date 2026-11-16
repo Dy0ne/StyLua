@@ -961,8 +961,8 @@ pub(crate) mod stmt_block {
     #[cfg(feature = "luau")]
     use full_moon::ast::luau::TypeFunction;
     use full_moon::ast::{
-        Call, Expression, Field, FunctionArgs, FunctionCall, Index, Prefix, Stmt, Suffix,
-        TableConstructor,
+        punctuated::Punctuated, Call, Expression, Field, FunctionArgs, FunctionCall, Index, Prefix,
+        Stmt, Suffix, TableConstructor,
     };
 
     fn format_table_constructor_block(
@@ -970,10 +970,18 @@ pub(crate) mod stmt_block {
         table_constructor: &TableConstructor,
         shape: Shape,
     ) -> TableConstructor {
+        let fields = format_fields_block(ctx, table_constructor.fields(), shape);
+        table_constructor.to_owned().with_fields(fields)
+    }
+
+    fn format_fields_block(
+        ctx: &Context,
+        fields: &Punctuated<Field>,
+        shape: Shape,
+    ) -> Punctuated<Field> {
         // Fields of a multiline table are indented one level deeper than the table itself
         let shape = shape.increment_block_indent();
-        let fields = table_constructor
-            .fields()
+        fields
             .pairs()
             .map(|pair| {
                 pair.to_owned().map(|field| match field {
@@ -1001,9 +1009,7 @@ pub(crate) mod stmt_block {
                     other => panic!("unknown node {:?}", other),
                 })
             })
-            .collect();
-
-        table_constructor.to_owned().with_fields(fields)
+            .collect()
     }
 
     fn format_function_args_block(
@@ -1032,6 +1038,14 @@ pub(crate) mod stmt_block {
                     shape,
                 )))
             }
+            #[cfg(feature = "hexm")]
+            FunctionArgs::Fields {
+                parentheses,
+                fields,
+            } => FunctionArgs::Fields {
+                parentheses: parentheses.to_owned(),
+                fields: format_fields_block(ctx, fields, shape),
+            },
             _ => function_args.to_owned(),
         }
     }

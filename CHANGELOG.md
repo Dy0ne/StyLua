@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added the `HexM` syntax (`syntax = "HexM"`, behind the `hexm` cargo feature) for the Lua 5.4 dialect of the Messiah Engine. It supports keyed call arguments, as used by the `dict` / `dictproxy` / `list` / `listproxy` constructors: `dict(a = 1, [k] = v)`. Keyed arguments are kept on one line when they fit, and otherwise placed one per line without a trailing comma. This requires a patched full-moon: run `./patches/full-moon/apply.sh` to create it from the patches in `patches/full-moon/`.
+
 ## [2.6.0] - 2026-10-10
 
 ### Added

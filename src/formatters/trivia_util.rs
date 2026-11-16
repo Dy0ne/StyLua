@@ -182,6 +182,22 @@ pub fn is_block_empty(block: &Block) -> bool {
     block.stmts().next().is_none() && block.last_stmt().is_none()
 }
 
+fn is_function_args_simple(function_args: &FunctionArgs) -> bool {
+    match function_args {
+        FunctionArgs::Parentheses { arguments, .. } => arguments.iter().all(is_expression_simple),
+        #[cfg(feature = "hexm")]
+        FunctionArgs::Fields { fields, .. } => fields.iter().all(|field| match field {
+            Field::ExpressionKey { key, value, .. } => {
+                is_expression_simple(key) && is_expression_simple(value)
+            }
+            Field::NameKey { value, .. } => is_expression_simple(value),
+            Field::NoKey(expression) => is_expression_simple(expression),
+            _ => true,
+        }),
+        _ => true,
+    }
+}
+
 fn is_expression_simple(expression: &Expression) -> bool {
     match expression {
         Expression::Function(_) => false,
@@ -189,18 +205,8 @@ fn is_expression_simple(expression: &Expression) -> bool {
             function_call.suffixes().all(|suffix| match suffix {
                 Suffix::Index(_) => true,
                 Suffix::Call(call) => match call {
-                    Call::AnonymousCall(function_args) => match function_args.as_ref() {
-                        FunctionArgs::Parentheses { arguments, .. } => {
-                            arguments.iter().all(is_expression_simple)
-                        }
-                        _ => true,
-                    },
-                    Call::MethodCall(method_call) => match method_call.args() {
-                        FunctionArgs::Parentheses { arguments, .. } => {
-                            arguments.iter().all(is_expression_simple)
-                        }
-                        _ => true,
-                    },
+                    Call::AnonymousCall(function_args) => is_function_args_simple(function_args),
+                    Call::MethodCall(method_call) => is_function_args_simple(method_call.args()),
                     other => unreachable!("unknown node: {:?}", other),
                 },
                 #[cfg(feature = "luau")]
@@ -308,6 +314,11 @@ impl GetTrailingTrivia for FunctionArgs {
                 let (_, end_brace) = table_constructor.braces().tokens();
                 end_brace.trailing_trivia().map(|x| x.to_owned()).collect()
             }
+            #[cfg(feature = "hexm")]
+            FunctionArgs::Fields { parentheses, .. } => {
+                let (_, end_parens) = parentheses.tokens();
+                end_parens.trailing_trivia().map(|x| x.to_owned()).collect()
+            }
             other => panic!("unknown node {:?}", other),
         }
     }
@@ -345,6 +356,8 @@ pub fn suffix_leading_trivia(suffix: &Suffix) -> impl Iterator<Item = &Token> {
                 FunctionArgs::TableConstructor(table_constructor) => {
                     table_constructor.braces().tokens().0.leading_trivia()
                 }
+                #[cfg(feature = "hexm")]
+                FunctionArgs::Fields { parentheses, .. } => parentheses.tokens().0.leading_trivia(),
                 other => panic!("unknown node {:?}", other),
             },
             Call::MethodCall(method_call) => method_call.colon_token().leading_trivia(),
@@ -1137,7 +1150,12 @@ pub fn contains_singleline_comments(node: impl Node) -> bool {
 
 /// Checks whether any [`Field`] within a [`TableConstructor`] contains comments, without checking the braces
 pub fn table_fields_contains_comments(table_constructor: &TableConstructor) -> bool {
-    table_constructor.fields().pairs().any(|field| {
+    fields_contain_comments(table_constructor.fields())
+}
+
+/// Checks whether any [`Field`] within a sequence of fields contains comments
+pub fn fields_contain_comments(fields: &Punctuated<Field>) -> bool {
+    fields.pairs().any(|field| {
         let comments = match field.value() {
             Field::ExpressionKey {
                 brackets,

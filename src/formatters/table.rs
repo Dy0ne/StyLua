@@ -138,7 +138,7 @@ fn handle_field_key_equals_comments<T: Node>(
     (key_leading_comments, equal)
 }
 
-fn format_field(
+pub fn format_field(
     ctx: &Context,
     field: &Field,
     table_type: TableType,

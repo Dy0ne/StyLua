@@ -47,15 +47,22 @@ pub enum LuaVersion {
     /// Parse Cfx Lua code
     #[cfg(feature = "cfxlua")]
     CfxLua,
+    /// Parse HexM Lua code (Lua 5.4 with keyed call arguments, such as `dict(a = 1, [k] = v)`)
+    #[cfg(feature = "hexm")]
+    HexM,
 }
 
 impl From<LuaVersion> for full_moon::LuaVersion {
     fn from(val: LuaVersion) -> Self {
         match val {
-            #[cfg(feature = "cfxlua")]
-            LuaVersion::All => full_moon::LuaVersion::new().with_cfxlua(),
-            #[cfg(not(feature = "cfxlua"))]
-            LuaVersion::All => full_moon::LuaVersion::new(),
+            LuaVersion::All => {
+                let version = full_moon::LuaVersion::new();
+                #[cfg(feature = "cfxlua")]
+                let version = version.with_cfxlua();
+                #[cfg(feature = "hexm")]
+                let version = version.with_hexm();
+                version
+            }
             LuaVersion::Lua51 => full_moon::LuaVersion::lua51(),
             #[cfg(feature = "lua52")]
             LuaVersion::Lua52 => full_moon::LuaVersion::lua52(),
@@ -69,6 +76,8 @@ impl From<LuaVersion> for full_moon::LuaVersion {
             LuaVersion::LuaJIT => full_moon::LuaVersion::luajit(),
             #[cfg(feature = "cfxlua")]
             LuaVersion::CfxLua => full_moon::LuaVersion::cfxlua(),
+            #[cfg(feature = "hexm")]
+            LuaVersion::HexM => full_moon::LuaVersion::hexm(),
         }
     }
 }

@@ -98,7 +98,8 @@ property_choice! {
     (Lua54, "lua54"),
     (Luau, "luau"),
     (LuaJIT, "luajit"),
-    (CfxLua, "cfxlua")
+    (CfxLua, "cfxlua"),
+    (HexM, "hexm")
 }
 
 property_choice! {
@@ -193,6 +194,8 @@ fn load(mut config: Config, properties: &Properties) -> Config {
             StyluaSyntaxChoice::LuaJIT => LuaVersion::LuaJIT,
             #[cfg(feature = "cfxlua")]
             StyluaSyntaxChoice::CfxLua => LuaVersion::CfxLua,
+            #[cfg(feature = "hexm")]
+            StyluaSyntaxChoice::HexM => LuaVersion::HexM,
             // If the feature is not enabled, ignore the value
             #[allow(unreachable_patterns)]
             _ => config.syntax,

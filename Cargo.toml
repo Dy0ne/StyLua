@@ -9,7 +9,7 @@ readme = "README.md"
 categories = ["command-line-utilities", "development-tools"]
 keywords = ["cli", "utility", "lua", "lua51", "formatter"]
 edition = "2018"
-exclude = ["stylua-vscode/**", "tests/**"]
+exclude = ["stylua-vscode/**", "tests/**", "full-moon/**"]
 
 [lib]
 name = "stylua_lib"
@@ -32,6 +32,7 @@ lua53 = ["lua52", "full_moon/lua53"]
 lua54 = ["lua53", "full_moon/lua54"]
 luajit = ["full_moon/luajit"]
 cfxlua = ["lua54", "full_moon/cfxlua"]
+hexm = ["lua54", "full_moon/hexm"]
 editorconfig = ["ec4rs"]
 lsp = ["lsp-server", "lsp-types", "lsp-textdocument"]
 
@@ -63,6 +64,11 @@ lsp-textdocument = { version = "0.4.2", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = { version = "0.2.108", optional = true }
+
+# full-moon is patched to add the `hexm` feature (keyed call arguments).
+# `full-moon/` is not checked in: create it with `./patches/full-moon/apply.sh`
+[patch.crates-io]
+full_moon = { path = "full-moon" }
 
 # full-moon should be compiled to release optimisations in debug mode due to stack overflows
 # https://github.com/Kampfkarren/full-moon/issues/140
